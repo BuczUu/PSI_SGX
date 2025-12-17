@@ -4,7 +4,6 @@
 #include "sgx_tcrypto.h"
 #include "string.h"
 
-
 // Do testow uzywamy przykladowego klucza
 static const sgx_ec256_public_t g_sp_pub_key = {
     {0x72, 0x12, 0x8a, 0x7a, 0x17, 0x52, 0x6e, 0xbf,
@@ -183,16 +182,7 @@ static sgx_status_t get_sk(sgx_ra_context_t context, sgx_aes_gcm_128bit_key_t *s
     if (!sk)
         return SGX_ERROR_INVALID_PARAMETER;
 
-    sgx_status_t ret = sgx_ra_get_keys(context, SGX_RA_KEY_SK, sk);
-    
-    // W SIM sgx_ra_get_keys zwroci blad, uzyjemy testowego klucza
-    if (ret != SGX_SUCCESS) {
-        // Testowy klucz dla SIM: wszystkie bajty = 0x55
-        memset(sk, 0x55, sizeof(*sk));
-        return SGX_SUCCESS;
-    }
-    
-    return ret;
+    return sgx_ra_get_keys(context, SGX_RA_KEY_SK, sk);
 }
 
 sgx_status_t ecall_ra_encrypt_client(
