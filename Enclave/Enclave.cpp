@@ -6,15 +6,23 @@
 #include "sgx_tkey_exchange.h"
 #include "sgx_tcrypto.h"
 #include "sgx_utils.h"
+#include "sgx_tcrypto.h"
 
-/* Multi-client PSI state */
+/* Stan PSI dla wielu klientow */
 static uint32_t client1_set[10] = {0};
 static uint32_t client1_size = 0;
 static uint32_t client2_set[10] = {0};
 static uint32_t client2_size = 0;
 static uint32_t clients_registered = 0;
 
-/* Service Provider's public key - hardcoded for RA */
+/* Stan ECDH per klient */
+static sgx_ecc_state_handle_t g_ecc_ctx[2] = {0, 0};
+static sgx_ec256_private_t g_srv_priv[2];
+static sgx_ec256_public_t g_srv_pub[2];
+static sgx_aes_gcm_128bit_key_t g_kx_keys[2];
+static int g_kx_ready[2] = {0, 0};
+
+/* Publiczny klucz SP - na sztywno do RA */
 static const sgx_ec256_public_t g_sp_pub_key = {
     {0x72, 0x12, 0x8a, 0x7a, 0x17, 0x52, 0x6e, 0xbf,
      0x85, 0xd0, 0x3a, 0x62, 0x37, 0x30, 0xae, 0xad,
@@ -25,14 +33,7 @@ static const sgx_ec256_public_t g_sp_pub_key = {
      0x24, 0xb7, 0xbd, 0xc9, 0x03, 0xf2, 0x9a, 0x28,
      0xa8, 0x3c, 0xc8, 0x10, 0x11, 0x14, 0x5e, 0x06}};
 
-/* Hardcoded session key for SIM mode (since sgx_ra_get_keys doesn't work in SIM)
- * In HW mode, this would be derived from ECDH key exchange */
-static const sgx_ec_key_128bit_t g_sim_session_key = {
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10
-};
-
-/* printf wrapper for enclave */
+/* Owijka printf do OCALL */
 int printf(const char *fmt, ...)
 {
     char buf[BUFSIZ] = {'\0'};
@@ -44,7 +45,7 @@ int printf(const char *fmt, ...)
     return (int)strnlen(buf, BUFSIZ - 1) + 1;
 }
 
-/* Remote Attestation Functions */
+/* Funkcje Remote Attestation */
 
 sgx_status_t enclave_init_ra(int b_pse, sgx_ra_context_t *p_context)
 {
@@ -114,14 +115,22 @@ sgx_status_t get_enclave_report(const sgx_target_info_t *target_info,
     return ret;
 }
 
-/* Get session key (SK) from RA context */
+/* Pobranie klucza SK z RA */
+static sgx_status_t get_sk_key(sgx_ra_context_t context, sgx_ec_key_128bit_t *sk_key)
+{
+    if (!sk_key)
+        return SGX_ERROR_INVALID_PARAMETER;
+    return sgx_ra_get_keys(context, SGX_RA_KEY_SK, sk_key);
+}
+
+/* Pobierz klucz sesyjny (SK) z kontekstu RA */
 sgx_status_t get_session_key(sgx_ra_context_t context, uint8_t *sk_key)
 {
     if (!sk_key)
         return SGX_ERROR_INVALID_PARAMETER;
 
     sgx_ec_key_128bit_t key;
-    sgx_status_t ret = sgx_ra_get_keys(context, SGX_RA_KEY_SK, &key);
+    sgx_status_t ret = get_sk_key(context, &key);
     if (ret != SGX_SUCCESS)
     {
         printf("[ENCLAVE] Failed to get SK key: 0x%x\n", ret);
@@ -133,7 +142,7 @@ sgx_status_t get_session_key(sgx_ra_context_t context, uint8_t *sk_key)
     return SGX_SUCCESS;
 }
 
-/* Encrypt PSI result using AES-GCM with SK key */
+/* Szyfruj wynik PSI AES-GCM uzywajac klucza SK */
 sgx_status_t encrypt_psi_result(sgx_ra_context_t context,
                                 const uint32_t *result,
                                 uint32_t result_count,
@@ -147,19 +156,19 @@ sgx_status_t encrypt_psi_result(sgx_ra_context_t context,
     if (encrypted_size < result_count * sizeof(uint32_t))
         return SGX_ERROR_INVALID_PARAMETER;
 
-    /* Get SK key from RA context */
+    /* Pobierz klucz SK z RA (dziala w SIM/HW) */
     sgx_ec_key_128bit_t sk_key;
-    sgx_status_t ret = sgx_ra_get_keys(context, SGX_RA_KEY_SK, &sk_key);
+    sgx_status_t ret = get_sk_key(context, &sk_key);
     if (ret != SGX_SUCCESS)
     {
         printf("[ENCLAVE] Failed to get SK key for encryption: 0x%x\n", ret);
         return ret;
     }
 
-    /* Initialize IV to zeros (should be random in production) */
+    /* IV zerowy do dema; w produkcji losowy */
     uint8_t aes_gcm_iv[12] = {0};
 
-    /* Encrypt using AES-GCM */
+    /* Szyfrowanie AES-GCM */
     ret = sgx_rijndael128GCM_encrypt(&sk_key,
                                      (const uint8_t *)result,
                                      result_count * sizeof(uint32_t),
@@ -180,7 +189,7 @@ sgx_status_t encrypt_psi_result(sgx_ra_context_t context,
     return SGX_SUCCESS;
 }
 
-/* Decrypt client data using AES-GCM with SK key */
+/* Odszyfruj dane klienta AES-GCM kluczem SK */
 sgx_status_t decrypt_client_data(sgx_ra_context_t context,
                                  const uint8_t *encrypted_data,
                                  uint32_t encrypted_size,
@@ -191,19 +200,19 @@ sgx_status_t decrypt_client_data(sgx_ra_context_t context,
     if (!encrypted_data || !gcm_mac || !decrypted_set || !set_size)
         return SGX_ERROR_INVALID_PARAMETER;
 
-    /* Get SK key from RA context */
+    /* Pobierz klucz SK z RA */
     sgx_ec_key_128bit_t sk_key;
-    sgx_status_t ret = sgx_ra_get_keys(context, SGX_RA_KEY_SK, &sk_key);
+    sgx_status_t ret = get_sk_key(context, &sk_key);
     if (ret != SGX_SUCCESS)
     {
         printf("[ENCLAVE] Failed to get SK key for decryption: 0x%x\n", ret);
         return ret;
     }
 
-    /* Initialize IV to zeros (must match encryption) */
+    /* IV zerowy (musi zgadzac sie z szyfrowaniem) */
     uint8_t aes_gcm_iv[12] = {0};
 
-    /* Decrypt using AES-GCM */
+    /* Odszyfrowanie AES-GCM */
     ret = sgx_rijndael128GCM_decrypt(&sk_key,
                                      encrypted_data,
                                      encrypted_size,
@@ -225,7 +234,122 @@ sgx_status_t decrypt_client_data(sgx_ra_context_t context,
     return SGX_SUCCESS;
 }
 
-/* Register client set */
+/* KX: inicjalizacja po stronie serwera - generuj efemeryczna pare i zwroc pubkey */
+sgx_status_t kx_server_init(uint32_t client_id, uint8_t *server_pubkey)
+{
+    if (client_id < 1 || client_id > 2 || !server_pubkey)
+        return SGX_ERROR_INVALID_PARAMETER;
+    uint32_t idx = client_id - 1;
+    sgx_status_t ret = sgx_ecc256_open_context(&g_ecc_ctx[idx]);
+    if (ret != SGX_SUCCESS)
+        return ret;
+    ret = sgx_ecc256_create_key_pair(&g_srv_priv[idx], &g_srv_pub[idx], g_ecc_ctx[idx]);
+    if (ret != SGX_SUCCESS)
+        return ret;
+    /* serialize pubkey (X||Y) */
+    memcpy(server_pubkey, g_srv_pub[idx].gx, 32);
+    memcpy(server_pubkey + 32, g_srv_pub[idx].gy, 32);
+    return SGX_SUCCESS;
+}
+
+/* KX: zakonczenie po stronie serwera - policz sekret DH i wyprowadz AES-128 */
+sgx_status_t kx_server_finish(uint32_t client_id, const uint8_t *client_pubkey)
+{
+    if (client_id < 1 || client_id > 2 || !client_pubkey)
+        return SGX_ERROR_INVALID_PARAMETER;
+    uint32_t idx = client_id - 1;
+    sgx_ec256_public_t peer{};
+    memcpy(peer.gx, client_pubkey, 32);
+    memcpy(peer.gy, client_pubkey + 32, 32);
+    sgx_ec256_dh_shared_t shared{};
+    sgx_status_t ret = sgx_ecc256_compute_shared_dhkey(&g_srv_priv[idx], &peer, &shared, g_ecc_ctx[idx]);
+    if (ret != SGX_SUCCESS)
+        return ret;
+    /* Derive AES-128 from shared (use SHA256, take first 16 bytes) */
+    sgx_sha256_hash_t hash;
+    ret = sgx_sha256_msg((const uint8_t *)&shared, sizeof(shared), &hash);
+    if (ret != SGX_SUCCESS)
+        return ret;
+    memcpy(&g_kx_keys[idx], hash, 16);
+    g_kx_ready[idx] = 1;
+    return SGX_SUCCESS;
+}
+
+static sgx_status_t kx_get_key(uint32_t client_id, sgx_aes_gcm_128bit_key_t *key)
+{
+    if (client_id < 1 || client_id > 2 || !key)
+        return SGX_ERROR_INVALID_PARAMETER;
+    uint32_t idx = client_id - 1;
+    if (!g_kx_ready[idx])
+        return SGX_ERROR_INVALID_STATE;
+    memcpy(key, &g_kx_keys[idx], sizeof(*key));
+    return SGX_SUCCESS;
+}
+
+sgx_status_t kx_encrypt_server(uint32_t client_id,
+                               const uint32_t *plaintext,
+                               uint32_t plain_count,
+                               const uint8_t *iv,
+                               uint8_t *ciphertext,
+                               uint32_t cipher_size,
+                               uint8_t *gcm_tag)
+{
+    if (!plaintext || !iv || !ciphertext || !gcm_tag)
+        return SGX_ERROR_INVALID_PARAMETER;
+    uint32_t pt_bytes = plain_count * sizeof(uint32_t);
+    if (cipher_size < pt_bytes)
+        return SGX_ERROR_INVALID_PARAMETER;
+    sgx_aes_gcm_128bit_key_t key;
+    sgx_status_t ret = kx_get_key(client_id, &key);
+    if (ret != SGX_SUCCESS)
+        return ret;
+    return sgx_rijndael128GCM_encrypt(&key,
+                                      (const uint8_t *)plaintext,
+                                      pt_bytes,
+                                      ciphertext,
+                                      iv,
+                                      12,
+                                      NULL,
+                                      0,
+                                      (sgx_aes_gcm_128bit_tag_t *)gcm_tag);
+}
+
+sgx_status_t kx_decrypt_server(uint32_t client_id,
+                               const uint8_t *ciphertext,
+                               uint32_t cipher_size,
+                               const uint8_t *iv,
+                               const uint8_t *gcm_tag,
+                               uint32_t *plaintext,
+                               uint32_t plain_max,
+                               uint32_t *plain_count)
+{
+    if (!ciphertext || !iv || !gcm_tag || !plaintext || !plain_count)
+        return SGX_ERROR_INVALID_PARAMETER;
+    if (cipher_size % sizeof(uint32_t))
+        return SGX_ERROR_INVALID_PARAMETER;
+    uint32_t pt_bytes = cipher_size;
+    uint32_t required = pt_bytes / sizeof(uint32_t);
+    if (plain_max < required)
+        return SGX_ERROR_INVALID_PARAMETER;
+    sgx_aes_gcm_128bit_key_t key;
+    sgx_status_t ret = kx_get_key(client_id, &key);
+    if (ret != SGX_SUCCESS)
+        return ret;
+    ret = sgx_rijndael128GCM_decrypt(&key,
+                                     ciphertext,
+                                     cipher_size,
+                                     (uint8_t *)plaintext,
+                                     iv,
+                                     12,
+                                     NULL,
+                                     0,
+                                     (const sgx_aes_gcm_128bit_tag_t *)gcm_tag);
+    if (ret == SGX_SUCCESS)
+        *plain_count = required;
+    return ret;
+}
+
+/* Rejestracja zbioru klienta */
 sgx_status_t ecall_register_client_set(uint32_t client_id, const uint32_t *set, uint32_t set_size)
 {
     if (!set || set_size == 0 || set_size > 10)
@@ -250,7 +374,7 @@ sgx_status_t ecall_register_client_set(uint32_t client_id, const uint32_t *set, 
     return SGX_SUCCESS;
 }
 
-/* Compute PSI intersection */
+/* Oblicz czesc wspolna PSI */
 sgx_status_t ecall_compute_psi_multi(uint32_t *result, uint32_t *result_count)
 {
     if (!result || !result_count || clients_registered != 2)

@@ -1,5 +1,5 @@
 /*
- * PSI_SGX Client - with enclave for Remote Attestation
+ * PSI_SGX Client - klient z enklawa do Remote Attestation
  */
 
 #include <stdio.h>
@@ -14,6 +14,7 @@
 #include "EnclaveClient_u.h"
 #include "sgx_urts.h"
 #include "sgx_ukey_exchange.h"
+#include "sp/service_provider.h"
 
 #define PORT 12345
 #define SET_SIZE 10
@@ -50,13 +51,11 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    /* Initialize enclave */
     if (initialize_enclave() < 0)
     {
         return -1;
     }
 
-    /* Create socket */
     int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_fd < 0)
     {
@@ -71,7 +70,7 @@ int main(int argc, char *argv[])
     server_addr.sin_port = htons(PORT);
     server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
-    /* Connect to server */
+    // laczenie z serwerem
     printf("[CLIENT %d] Connecting to server...\n", client_id);
     if (connect(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     {
@@ -82,7 +81,7 @@ int main(int argc, char *argv[])
 
     printf("[CLIENT %d] Connected to server\n", client_id);
 
-    /* Step 1: Send client certificate for authentication */
+    // Krok 1: wyslij hash certyfikatu klienta do uwierzytelnienia
     const uint8_t *my_cert_hash = authorized_clients[client_id - 1].cert_hash;
     if (send(socket_fd, my_cert_hash, 32, 0) < 0)
     {
@@ -92,7 +91,7 @@ int main(int argc, char *argv[])
     }
     printf("[CLIENT %d] Certificate sent to server\n", client_id);
 
-    /* Step 2: Wait for authentication response */
+    // Krok 2: odbierz wynik uwierzytelnienia
     uint32_t auth_response;
     if (recv(socket_fd, &auth_response, sizeof(auth_response), 0) <= 0)
     {
@@ -111,7 +110,7 @@ int main(int argc, char *argv[])
     }
     printf("[CLIENT %d] Authentication successful - server verified\n", client_id);
 
-    /* Step 3: Initialize Remote Attestation in enclave */
+    // Krok 3: zainicjuj RA w enklawie
     sgx_status_t ret, ra_status;
     sgx_ra_context_t ra_context;
 
@@ -125,7 +124,7 @@ int main(int argc, char *argv[])
     }
     printf("[CLIENT %d] RA initialized, context: %u\n", client_id, ra_context);
 
-    /* Step 4: Generate MSG1 */
+    // Krok 4: wygeneruj MSG1
     sgx_ra_msg1_t msg1;
     ret = sgx_ra_get_msg1(ra_context, global_eid, sgx_ra_get_ga, &msg1);
     if (ret != SGX_SUCCESS)
@@ -138,7 +137,7 @@ int main(int argc, char *argv[])
     }
     printf("[CLIENT %d] MSG1 generated\n", client_id);
 
-    /* Step 5: Send MSG1 to server */
+    // Krok 5: wyslij MSG1 do serwera
     if (send(socket_fd, &msg1, sizeof(sgx_ra_msg1_t), 0) < 0)
     {
         perror("send MSG1");
@@ -149,7 +148,7 @@ int main(int argc, char *argv[])
     }
     printf("[CLIENT %d] MSG1 sent to server\n", client_id);
 
-    /* Step 6: Receive MSG2 from server */
+    // Krok 6: odbierz MSG2 z serwera
     uint32_t msg2_size;
     if (recv(socket_fd, &msg2_size, sizeof(msg2_size), 0) <= 0)
     {
@@ -181,7 +180,7 @@ int main(int argc, char *argv[])
     }
     printf("[CLIENT %d] MSG2 received (size: %u)\n", client_id, msg2_size);
 
-    /* Step 7: Process MSG2 and generate MSG3 */
+    // Krok 7: przetworz MSG2 i wygeneruj MSG3
     sgx_ra_msg3_t *p_msg3 = NULL;
     uint32_t msg3_size = 0;
 
@@ -199,7 +198,7 @@ int main(int argc, char *argv[])
     }
     printf("[CLIENT %d] MSG3 generated (size: %u)\n", client_id, msg3_size);
 
-    /* Step 8: Send MSG3 to server */
+    // Krok 8: wyslij MSG3 do serwera
     if (send(socket_fd, &msg3_size, sizeof(msg3_size), 0) < 0)
     {
         perror("send MSG3 size");
@@ -222,7 +221,7 @@ int main(int argc, char *argv[])
     free(p_msg3);
     printf("[CLIENT %d] MSG3 sent - RA protocol completed!\n", client_id);
 
-    /* Step 9: Receive attestation result */
+    // Krok 9: odbierz wynik atestacji
     uint32_t attestation_result;
     if (recv(socket_fd, &attestation_result, sizeof(attestation_result), 0) <= 0)
     {
@@ -242,7 +241,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    /* Step 10: Receive server MRENCLAVE and verify pinned measurement */
+    // Krok 10: odbierz MRENCLAVE serwera i zweryfikuj
     uint8_t server_mrenclave[32];
     if (recv(socket_fd, server_mrenclave, sizeof(server_mrenclave), 0) <= 0)
     {
@@ -255,7 +254,6 @@ int main(int argc, char *argv[])
 
     int match = 0;
 
-    /* Skip check if expected measurement is all zeros (user must fill it) */
     int expected_nonzero = 0;
     for (int i = 0; i < 32; i++)
         expected_nonzero |= expected_server_mrenclave[i];
@@ -263,10 +261,10 @@ int main(int argc, char *argv[])
     if (expected_nonzero)
     {
         sgx_status_t m_status = verify_server_mrenclave(global_eid, &ra_status,
-                                ra_context,
-                                server_mrenclave,
-                                const_cast<uint8_t *>(expected_server_mrenclave),
-                                &match);
+                                                        ra_context,
+                                                        server_mrenclave,
+                                                        const_cast<uint8_t *>(expected_server_mrenclave),
+                                                        &match);
         if (m_status != SGX_SUCCESS || ra_status != SGX_SUCCESS || !match)
         {
             printf("[CLIENT %d] Server MRENCLAVE mismatch!\n", client_id);
@@ -284,13 +282,126 @@ int main(int argc, char *argv[])
 
     printf("[CLIENT %d] Server attestation successful - server code verified!\n", client_id);
 
-    /* Prepare data sets */
+    /* ===== MUTUAL ATTESTATION: Klient weryfikuje serwer (klient jako SP) ===== */
+    printf("[CLIENT %d] Starting mutual attestation - verifying server enclave...\n", client_id);
+
+    // Odbierz MSG1 od serwera
+    sgx_ra_msg1_t server_msg1;
+    if (recv(socket_fd, &server_msg1, sizeof(server_msg1), 0) <= 0)
+    {
+        printf("[CLIENT %d] Failed to receive server MSG1\n", client_id);
+        enclave_ra_close(global_eid, &ra_status, ra_context);
+        close(socket_fd);
+        sgx_destroy_enclave(global_eid);
+        return -1;
+    }
+    printf("[CLIENT %d] Server MSG1 received\n", client_id);
+
+    // Przetworzenie MSG1 serwera przez SP (klient jako SP)
+    sample_ra_msg1_t sp_server_msg1;
+    memcpy(&sp_server_msg1, &server_msg1, sizeof(sp_server_msg1));
+    
+    ra_samp_response_header_t *p_server_msg2_full = NULL;
+    int sp_status = sp_ra_proc_msg1_req(&sp_server_msg1, sizeof(sp_server_msg1), &p_server_msg2_full);
+    if (sp_status != SP_OK || !p_server_msg2_full || p_server_msg2_full->type != TYPE_RA_MSG2)
+    {
+        printf("[CLIENT %d] Failed to generate server MSG2 (sp_status=%d)\n", client_id, sp_status);
+        if (p_server_msg2_full) free(p_server_msg2_full);
+        enclave_ra_close(global_eid, &ra_status, ra_context);
+        close(socket_fd);
+        sgx_destroy_enclave(global_eid);
+        return -1;
+    }
+
+    // Wyslij MSG2 do serwera
+    uint32_t server_msg2_size = p_server_msg2_full->size;
+    if (send(socket_fd, &server_msg2_size, sizeof(server_msg2_size), 0) < 0 ||
+        send(socket_fd, p_server_msg2_full->body, server_msg2_size, 0) < 0)
+    {
+        printf("[CLIENT %d] Failed to send server MSG2\n", client_id);
+        free(p_server_msg2_full);
+        enclave_ra_close(global_eid, &ra_status, ra_context);
+        close(socket_fd);
+        sgx_destroy_enclave(global_eid);
+        return -1;
+    }
+    free(p_server_msg2_full);
+    printf("[CLIENT %d] Server MSG2 sent\n", client_id);
+
+    // Odbierz MSG3 od serwera
+    uint32_t server_msg3_size;
+    if (recv(socket_fd, &server_msg3_size, sizeof(server_msg3_size), 0) <= 0)
+    {
+        printf("[CLIENT %d] Failed to receive server MSG3 size\n", client_id);
+        enclave_ra_close(global_eid, &ra_status, ra_context);
+        close(socket_fd);
+        sgx_destroy_enclave(global_eid);
+        return -1;
+    }
+
+    sgx_ra_msg3_t *p_server_msg3 = (sgx_ra_msg3_t *)malloc(server_msg3_size);
+    if (!p_server_msg3)
+    {
+        printf("[CLIENT %d] Memory allocation failed for server MSG3\n", client_id);
+        enclave_ra_close(global_eid, &ra_status, ra_context);
+        close(socket_fd);
+        sgx_destroy_enclave(global_eid);
+        return -1;
+    }
+
+    if (recv(socket_fd, p_server_msg3, server_msg3_size, 0) <= 0)
+    {
+        printf("[CLIENT %d] Failed to receive server MSG3\n", client_id);
+        free(p_server_msg3);
+        enclave_ra_close(global_eid, &ra_status, ra_context);
+        close(socket_fd);
+        sgx_destroy_enclave(global_eid);
+        return -1;
+    }
+    printf("[CLIENT %d] Server MSG3 received (size: %u)\n", client_id, server_msg3_size);
+
+    // Weryfikuj MSG3 serwera przez SP (klient jako SP)
+    ra_samp_response_header_t *p_server_att_result = NULL;
+    sp_status = sp_ra_proc_msg3_req((sample_ra_msg3_t *)p_server_msg3, server_msg3_size, &p_server_att_result);
+    free(p_server_msg3);
+
+    if (sp_status != SP_OK || !p_server_att_result || p_server_att_result->type != TYPE_RA_ATT_RESULT)
+    {
+        printf("[CLIENT %d] Server attestation verification FAILED (sp_status=%d)\n", client_id, sp_status);
+        uint32_t server_att_failed = 0xFFFFFFFF;
+        send(socket_fd, &server_att_failed, sizeof(server_att_failed), 0);
+        if (p_server_att_result) free(p_server_att_result);
+        enclave_ra_close(global_eid, &ra_status, ra_context);
+        close(socket_fd);
+        sgx_destroy_enclave(global_eid);
+        return -1;
+    }
+    free(p_server_att_result);
+    printf("[CLIENT %d] Server MSG3 verified - server enclave is AUTHENTIC!\n", client_id);
+
+    // Wyslij potwierdzenie weryfikacji serwera
+    uint32_t server_att_ok = 0x00000000;
+    if (send(socket_fd, &server_att_ok, sizeof(server_att_ok), 0) < 0)
+    {
+        printf("[CLIENT %d] Failed to send server attestation result\n", client_id);
+        enclave_ra_close(global_eid, &ra_status, ra_context);
+        close(socket_fd);
+        sgx_destroy_enclave(global_eid);
+        return -1;
+    }
+
+    printf("[CLIENT %d] ===== MUTUAL ATTESTATION COMPLETE - both enclaves verified! =====\n", client_id);
+
+    // KX niepotrzebny - uzywamy RA SK (sgx_ra_get_keys)
+    printf("[CLIENT %d] Using RA session key for encryption (no KX needed)\n", client_id);
+
+    // przygotowanie zbioru danych
     uint32_t set[SET_SIZE];
     uint32_t set_size;
 
     if (client_id == 1)
     {
-        /* Set 1: {1, 2, 3, 4, 5} */
+        // {1, 2, 3, 4, 5}
         uint32_t data[] = {1, 2, 3, 4, 5};
         set_size = 5;
         memcpy(set, data, set_size * sizeof(uint32_t));
@@ -298,57 +409,105 @@ int main(int argc, char *argv[])
     }
     else
     {
-        /* Set 2: {3, 4, 5, 6, 7} */
+        // {3, 4, 5, 6, 7}
         uint32_t data[] = {3, 4, 5, 6, 7};
         set_size = 5;
         memcpy(set, data, set_size * sizeof(uint32_t));
         printf("[CLIENT %d] Set: {3, 4, 5, 6, 7}\n", client_id);
     }
 
-    /* Send set size */
-    if (send(socket_fd, &set_size, sizeof(set_size), 0) < 0)
+    // szyfrowanie zbior w enklawie
+    uint8_t iv[12] = {0};
+    uint32_t cipher_size = set_size * sizeof(uint32_t);
+    uint8_t *ciphertext = (uint8_t *)malloc(cipher_size);
+    uint8_t gcm_tag[16];
+
+    if (!ciphertext)
     {
-        perror("send set_size");
+        printf("[CLIENT %d] Memory allocation failed\n", client_id);
         close(socket_fd);
         return -1;
     }
 
-    /* Send set elements */
-    for (uint32_t i = 0; i < set_size; i++)
+    // Uzyj RA SK zamiast KX (po mutual attestation)
+    ret = ecall_ra_encrypt_client(global_eid, &ra_status,
+                                   ra_context,
+                                   set, set_size, iv,
+                                   ciphertext, cipher_size, gcm_tag);
+    if (ret != SGX_SUCCESS || ra_status != SGX_SUCCESS)
     {
-        if (send(socket_fd, &set[i], sizeof(uint32_t), 0) < 0)
-        {
-            perror("send element");
-            close(socket_fd);
-            return -1;
-        }
+        printf("[CLIENT %d] Failed to encrypt set with RA SK: ret=0x%x, ra_status=0x%x\n", client_id, ret, ra_status);
+        free(ciphertext);
+        close(socket_fd);
+        return -1;
     }
 
-    printf("[CLIENT %d] Set sent to server\n", client_id);
+    // wysylanie szyfrogramu
+    if (send(socket_fd, &cipher_size, sizeof(cipher_size), 0) < 0 ||
+        send(socket_fd, ciphertext, cipher_size, 0) < 0 ||
+        send(socket_fd, gcm_tag, sizeof(gcm_tag), 0) < 0)
+    {
+        perror("send encrypted set");
+        free(ciphertext);
+        close(socket_fd);
+        return -1;
+    }
+    free(ciphertext);
 
-    /* Wait for PSI result (plaintext for now) */
-    printf("[CLIENT %d] Waiting for PSI result...\n", client_id);
-    uint32_t result_count;
+    printf("[CLIENT %d] Encrypted set sent to server\n", client_id);
 
-    if (recv(socket_fd, &result_count, sizeof(result_count), 0) <= 0)
+    // czekaj na zaszyfrowany wynik PSI
+    printf("[CLIENT %d] Waiting for encrypted PSI result...\n", client_id);
+    uint32_t result_cipher_size;
+
+    if (recv(socket_fd, &result_cipher_size, sizeof(result_cipher_size), 0) <= 0)
     {
         printf("[CLIENT %d] No result received or connection closed\n", client_id);
         close(socket_fd);
         return 0;
     }
 
+    uint8_t *result_ciphertext = (uint8_t *)malloc(result_cipher_size);
+    uint8_t result_tag[16];
+    if (!result_ciphertext)
+    {
+        printf("[CLIENT %d] Memory allocation failed\n", client_id);
+        close(socket_fd);
+        return -1;
+    }
+
+    if (recv(socket_fd, result_ciphertext, result_cipher_size, 0) <= 0 ||
+        recv(socket_fd, result_tag, sizeof(result_tag), 0) <= 0)
+    {
+        printf("[CLIENT %d] Failed to receive encrypted result\n", client_id);
+        free(result_ciphertext);
+        close(socket_fd);
+        return -1;
+    }
+
+    // odszyfruj wynik w enklawie (RA SK)
+    uint32_t result[SET_SIZE];
+    uint32_t result_count = 0;
+    ret = ecall_ra_decrypt_client(global_eid, &ra_status,
+                                   ra_context,
+                                   result_ciphertext, result_cipher_size, iv, result_tag,
+                                   result, SET_SIZE, &result_count);
+    free(result_ciphertext);
+
+    if (ret != SGX_SUCCESS || ra_status != SGX_SUCCESS)
+    {
+        printf("[CLIENT %d] Failed to decrypt result with RA SK: ret=0x%x, ra_status=0x%x\n", client_id, ret, ra_status);
+        close(socket_fd);
+        return -1;
+    }
+
     printf("[CLIENT %d] PSI Result: ", client_id);
     for (uint32_t i = 0; i < result_count; i++)
     {
-        uint32_t value;
-        if (recv(socket_fd, &value, sizeof(uint32_t), 0) > 0)
-        {
-            printf("%u ", value);
-        }
+        printf("%u ", result[i]);
     }
     printf("\n");
 
-    /* Cleanup */
     enclave_ra_close(global_eid, &ra_status, ra_context);
     close(socket_fd);
     sgx_destroy_enclave(global_eid);

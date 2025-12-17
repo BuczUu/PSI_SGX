@@ -124,7 +124,7 @@ Client_Cpp_Objects := $(Client_Cpp_Files:.cpp=.o)
 
 SP_CRYPTO_PATH := /home/marcel/sgx_lab/examples/RemoteAttestation/sample_libcrypto
 Server_Link_Flags := -L$(SGX_LIBRARY_PATH) -l$(Urts_Library_Name) -l$(Uae_Library_Name) -lsgx_ukey_exchange -L$(SP_CRYPTO_PATH) -lsample_libcrypto -lpthread
-Client_Link_Flags := -L$(SGX_LIBRARY_PATH) -l$(Urts_Library_Name) -l$(Uae_Library_Name) -lsgx_ukey_exchange -lpthread
+Client_Link_Flags := -L$(SGX_LIBRARY_PATH) -l$(Urts_Library_Name) -l$(Uae_Library_Name) -lsgx_ukey_exchange -L$(SP_CRYPTO_PATH) -lsample_libcrypto -lpthread
 
 ######## Enclave Settings ########
 

@@ -66,6 +66,34 @@ enclave {
         public sgx_status_t ecall_compute_psi_multi(
             [out, count=10] uint32_t* result,
             [out] uint32_t* result_count);
+
+        /* Enclave-to-Enclave Key Exchange (server side) */
+        public sgx_status_t kx_server_init(
+            uint32_t client_id,
+            [out, size=64] uint8_t* server_pubkey);
+
+        public sgx_status_t kx_server_finish(
+            uint32_t client_id,
+            [in, size=64] const uint8_t* client_pubkey);
+
+        public sgx_status_t kx_encrypt_server(
+            uint32_t client_id,
+            [in, count=plain_count] const uint32_t* plaintext,
+            uint32_t plain_count,
+            [in, size=12] const uint8_t* iv,
+            [out, size=cipher_size] uint8_t* ciphertext,
+            uint32_t cipher_size,
+            [out, size=16] uint8_t* gcm_tag);
+
+        public sgx_status_t kx_decrypt_server(
+            uint32_t client_id,
+            [in, size=cipher_size] const uint8_t* ciphertext,
+            uint32_t cipher_size,
+            [in, size=12] const uint8_t* iv,
+            [in, size=16] const uint8_t* gcm_tag,
+            [out, count=plain_max] uint32_t* plaintext,
+            uint32_t plain_max,
+            [out] uint32_t* plain_count);
     };
     
     untrusted {

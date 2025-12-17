@@ -74,6 +74,41 @@ typedef struct ms_ecall_compute_psi_multi_t {
 	uint32_t* ms_result_count;
 } ms_ecall_compute_psi_multi_t;
 
+typedef struct ms_kx_server_init_t {
+	sgx_status_t ms_retval;
+	uint32_t ms_client_id;
+	uint8_t* ms_server_pubkey;
+} ms_kx_server_init_t;
+
+typedef struct ms_kx_server_finish_t {
+	sgx_status_t ms_retval;
+	uint32_t ms_client_id;
+	const uint8_t* ms_client_pubkey;
+} ms_kx_server_finish_t;
+
+typedef struct ms_kx_encrypt_server_t {
+	sgx_status_t ms_retval;
+	uint32_t ms_client_id;
+	const uint32_t* ms_plaintext;
+	uint32_t ms_plain_count;
+	const uint8_t* ms_iv;
+	uint8_t* ms_ciphertext;
+	uint32_t ms_cipher_size;
+	uint8_t* ms_gcm_tag;
+} ms_kx_encrypt_server_t;
+
+typedef struct ms_kx_decrypt_server_t {
+	sgx_status_t ms_retval;
+	uint32_t ms_client_id;
+	const uint8_t* ms_ciphertext;
+	uint32_t ms_cipher_size;
+	const uint8_t* ms_iv;
+	const uint8_t* ms_gcm_tag;
+	uint32_t* ms_plaintext;
+	uint32_t ms_plain_max;
+	uint32_t* ms_plain_count;
+} ms_kx_decrypt_server_t;
+
 typedef struct ms_sgx_ra_get_ga_t {
 	sgx_status_t ms_retval;
 	sgx_ra_context_t ms_context;
@@ -242,13 +277,68 @@ sgx_status_t ecall_compute_psi_multi(sgx_enclave_id_t eid, sgx_status_t* retval,
 	return status;
 }
 
+sgx_status_t kx_server_init(sgx_enclave_id_t eid, sgx_status_t* retval, uint32_t client_id, uint8_t* server_pubkey)
+{
+	sgx_status_t status;
+	ms_kx_server_init_t ms;
+	ms.ms_client_id = client_id;
+	ms.ms_server_pubkey = server_pubkey;
+	status = sgx_ecall(eid, 10, &ocall_table_Enclave, &ms);
+	if (status == SGX_SUCCESS && retval) *retval = ms.ms_retval;
+	return status;
+}
+
+sgx_status_t kx_server_finish(sgx_enclave_id_t eid, sgx_status_t* retval, uint32_t client_id, const uint8_t* client_pubkey)
+{
+	sgx_status_t status;
+	ms_kx_server_finish_t ms;
+	ms.ms_client_id = client_id;
+	ms.ms_client_pubkey = client_pubkey;
+	status = sgx_ecall(eid, 11, &ocall_table_Enclave, &ms);
+	if (status == SGX_SUCCESS && retval) *retval = ms.ms_retval;
+	return status;
+}
+
+sgx_status_t kx_encrypt_server(sgx_enclave_id_t eid, sgx_status_t* retval, uint32_t client_id, const uint32_t* plaintext, uint32_t plain_count, const uint8_t* iv, uint8_t* ciphertext, uint32_t cipher_size, uint8_t* gcm_tag)
+{
+	sgx_status_t status;
+	ms_kx_encrypt_server_t ms;
+	ms.ms_client_id = client_id;
+	ms.ms_plaintext = plaintext;
+	ms.ms_plain_count = plain_count;
+	ms.ms_iv = iv;
+	ms.ms_ciphertext = ciphertext;
+	ms.ms_cipher_size = cipher_size;
+	ms.ms_gcm_tag = gcm_tag;
+	status = sgx_ecall(eid, 12, &ocall_table_Enclave, &ms);
+	if (status == SGX_SUCCESS && retval) *retval = ms.ms_retval;
+	return status;
+}
+
+sgx_status_t kx_decrypt_server(sgx_enclave_id_t eid, sgx_status_t* retval, uint32_t client_id, const uint8_t* ciphertext, uint32_t cipher_size, const uint8_t* iv, const uint8_t* gcm_tag, uint32_t* plaintext, uint32_t plain_max, uint32_t* plain_count)
+{
+	sgx_status_t status;
+	ms_kx_decrypt_server_t ms;
+	ms.ms_client_id = client_id;
+	ms.ms_ciphertext = ciphertext;
+	ms.ms_cipher_size = cipher_size;
+	ms.ms_iv = iv;
+	ms.ms_gcm_tag = gcm_tag;
+	ms.ms_plaintext = plaintext;
+	ms.ms_plain_max = plain_max;
+	ms.ms_plain_count = plain_count;
+	status = sgx_ecall(eid, 13, &ocall_table_Enclave, &ms);
+	if (status == SGX_SUCCESS && retval) *retval = ms.ms_retval;
+	return status;
+}
+
 sgx_status_t sgx_ra_get_ga(sgx_enclave_id_t eid, sgx_status_t* retval, sgx_ra_context_t context, sgx_ec256_public_t* g_a)
 {
 	sgx_status_t status;
 	ms_sgx_ra_get_ga_t ms;
 	ms.ms_context = context;
 	ms.ms_g_a = g_a;
-	status = sgx_ecall(eid, 10, &ocall_table_Enclave, &ms);
+	status = sgx_ecall(eid, 14, &ocall_table_Enclave, &ms);
 	if (status == SGX_SUCCESS && retval) *retval = ms.ms_retval;
 	return status;
 }
@@ -262,7 +352,7 @@ sgx_status_t sgx_ra_proc_msg2_trusted(sgx_enclave_id_t eid, sgx_status_t* retval
 	ms.ms_p_qe_target = p_qe_target;
 	ms.ms_p_report = p_report;
 	ms.ms_p_nonce = p_nonce;
-	status = sgx_ecall(eid, 11, &ocall_table_Enclave, &ms);
+	status = sgx_ecall(eid, 15, &ocall_table_Enclave, &ms);
 	if (status == SGX_SUCCESS && retval) *retval = ms.ms_retval;
 	return status;
 }
@@ -276,7 +366,7 @@ sgx_status_t sgx_ra_get_msg3_trusted(sgx_enclave_id_t eid, sgx_status_t* retval,
 	ms.ms_qe_report = qe_report;
 	ms.ms_p_msg3 = p_msg3;
 	ms.ms_msg3_size = msg3_size;
-	status = sgx_ecall(eid, 12, &ocall_table_Enclave, &ms);
+	status = sgx_ecall(eid, 16, &ocall_table_Enclave, &ms);
 	if (status == SGX_SUCCESS && retval) *retval = ms.ms_retval;
 	return status;
 }

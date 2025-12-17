@@ -43,8 +43,6 @@ PSI_SGX/
 │   ├── Enclave.edl         # EDL z funkcjami RA (enclave_init_ra, verify_att_result_mac)
 │   ├── Enclave.cpp         # Implementacja PSI + RA w enklawię
 │   └── Enclave.config.xml  # Konfiguracja enklawiy
-├── App/
-│   └── App.cpp             # Aplikacja testowa (single-client mode)
 ├── Server.cpp              # Serwer multi-client z RA i weryfikacją certów
 ├── Client.cpp              # Klient wysyłający certyfikat i weryfikujący serwer
 ├── client_certs.h          # Pinned certificates (MRENCLAVE + cert hashes)
@@ -58,7 +56,6 @@ make SGX_MODE=SIM SGX_DEBUG=1
 ```
 
 Komponenty:
-- `app` - tryb single-client (testowy)
 - `server` - serwer multi-client z RA
 - `client` - klient z weryfikacją RA
 

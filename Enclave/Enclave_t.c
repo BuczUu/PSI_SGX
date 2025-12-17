@@ -100,6 +100,41 @@ typedef struct ms_ecall_compute_psi_multi_t {
 	uint32_t* ms_result_count;
 } ms_ecall_compute_psi_multi_t;
 
+typedef struct ms_kx_server_init_t {
+	sgx_status_t ms_retval;
+	uint32_t ms_client_id;
+	uint8_t* ms_server_pubkey;
+} ms_kx_server_init_t;
+
+typedef struct ms_kx_server_finish_t {
+	sgx_status_t ms_retval;
+	uint32_t ms_client_id;
+	const uint8_t* ms_client_pubkey;
+} ms_kx_server_finish_t;
+
+typedef struct ms_kx_encrypt_server_t {
+	sgx_status_t ms_retval;
+	uint32_t ms_client_id;
+	const uint32_t* ms_plaintext;
+	uint32_t ms_plain_count;
+	const uint8_t* ms_iv;
+	uint8_t* ms_ciphertext;
+	uint32_t ms_cipher_size;
+	uint8_t* ms_gcm_tag;
+} ms_kx_encrypt_server_t;
+
+typedef struct ms_kx_decrypt_server_t {
+	sgx_status_t ms_retval;
+	uint32_t ms_client_id;
+	const uint8_t* ms_ciphertext;
+	uint32_t ms_cipher_size;
+	const uint8_t* ms_iv;
+	const uint8_t* ms_gcm_tag;
+	uint32_t* ms_plaintext;
+	uint32_t ms_plain_max;
+	uint32_t* ms_plain_count;
+} ms_kx_decrypt_server_t;
+
 typedef struct ms_sgx_ra_get_ga_t {
 	sgx_status_t ms_retval;
 	sgx_ra_context_t ms_context;
@@ -929,6 +964,402 @@ err:
 	return status;
 }
 
+static sgx_status_t SGX_CDECL sgx_kx_server_init(void* pms)
+{
+	CHECK_REF_POINTER(pms, sizeof(ms_kx_server_init_t));
+	//
+	// fence after pointer checks
+	//
+	sgx_lfence();
+	ms_kx_server_init_t* ms = SGX_CAST(ms_kx_server_init_t*, pms);
+	ms_kx_server_init_t __in_ms;
+	if (memcpy_s(&__in_ms, sizeof(ms_kx_server_init_t), ms, sizeof(ms_kx_server_init_t))) {
+		return SGX_ERROR_UNEXPECTED;
+	}
+	sgx_status_t status = SGX_SUCCESS;
+	uint8_t* _tmp_server_pubkey = __in_ms.ms_server_pubkey;
+	size_t _len_server_pubkey = 64;
+	uint8_t* _in_server_pubkey = NULL;
+	sgx_status_t _in_retval;
+
+	CHECK_UNIQUE_POINTER(_tmp_server_pubkey, _len_server_pubkey);
+
+	//
+	// fence after pointer checks
+	//
+	sgx_lfence();
+
+	if (_tmp_server_pubkey != NULL && _len_server_pubkey != 0) {
+		if ( _len_server_pubkey % sizeof(*_tmp_server_pubkey) != 0)
+		{
+			status = SGX_ERROR_INVALID_PARAMETER;
+			goto err;
+		}
+		if ((_in_server_pubkey = (uint8_t*)malloc(_len_server_pubkey)) == NULL) {
+			status = SGX_ERROR_OUT_OF_MEMORY;
+			goto err;
+		}
+
+		memset((void*)_in_server_pubkey, 0, _len_server_pubkey);
+	}
+	_in_retval = kx_server_init(__in_ms.ms_client_id, _in_server_pubkey);
+	if (memcpy_verw_s(&ms->ms_retval, sizeof(ms->ms_retval), &_in_retval, sizeof(_in_retval))) {
+		status = SGX_ERROR_UNEXPECTED;
+		goto err;
+	}
+	if (_in_server_pubkey) {
+		if (memcpy_verw_s(_tmp_server_pubkey, _len_server_pubkey, _in_server_pubkey, _len_server_pubkey)) {
+			status = SGX_ERROR_UNEXPECTED;
+			goto err;
+		}
+	}
+
+err:
+	if (_in_server_pubkey) free(_in_server_pubkey);
+	return status;
+}
+
+static sgx_status_t SGX_CDECL sgx_kx_server_finish(void* pms)
+{
+	CHECK_REF_POINTER(pms, sizeof(ms_kx_server_finish_t));
+	//
+	// fence after pointer checks
+	//
+	sgx_lfence();
+	ms_kx_server_finish_t* ms = SGX_CAST(ms_kx_server_finish_t*, pms);
+	ms_kx_server_finish_t __in_ms;
+	if (memcpy_s(&__in_ms, sizeof(ms_kx_server_finish_t), ms, sizeof(ms_kx_server_finish_t))) {
+		return SGX_ERROR_UNEXPECTED;
+	}
+	sgx_status_t status = SGX_SUCCESS;
+	const uint8_t* _tmp_client_pubkey = __in_ms.ms_client_pubkey;
+	size_t _len_client_pubkey = 64;
+	uint8_t* _in_client_pubkey = NULL;
+	sgx_status_t _in_retval;
+
+	CHECK_UNIQUE_POINTER(_tmp_client_pubkey, _len_client_pubkey);
+
+	//
+	// fence after pointer checks
+	//
+	sgx_lfence();
+
+	if (_tmp_client_pubkey != NULL && _len_client_pubkey != 0) {
+		if ( _len_client_pubkey % sizeof(*_tmp_client_pubkey) != 0)
+		{
+			status = SGX_ERROR_INVALID_PARAMETER;
+			goto err;
+		}
+		_in_client_pubkey = (uint8_t*)malloc(_len_client_pubkey);
+		if (_in_client_pubkey == NULL) {
+			status = SGX_ERROR_OUT_OF_MEMORY;
+			goto err;
+		}
+
+		if (memcpy_s(_in_client_pubkey, _len_client_pubkey, _tmp_client_pubkey, _len_client_pubkey)) {
+			status = SGX_ERROR_UNEXPECTED;
+			goto err;
+		}
+
+	}
+	_in_retval = kx_server_finish(__in_ms.ms_client_id, (const uint8_t*)_in_client_pubkey);
+	if (memcpy_verw_s(&ms->ms_retval, sizeof(ms->ms_retval), &_in_retval, sizeof(_in_retval))) {
+		status = SGX_ERROR_UNEXPECTED;
+		goto err;
+	}
+
+err:
+	if (_in_client_pubkey) free(_in_client_pubkey);
+	return status;
+}
+
+static sgx_status_t SGX_CDECL sgx_kx_encrypt_server(void* pms)
+{
+	CHECK_REF_POINTER(pms, sizeof(ms_kx_encrypt_server_t));
+	//
+	// fence after pointer checks
+	//
+	sgx_lfence();
+	ms_kx_encrypt_server_t* ms = SGX_CAST(ms_kx_encrypt_server_t*, pms);
+	ms_kx_encrypt_server_t __in_ms;
+	if (memcpy_s(&__in_ms, sizeof(ms_kx_encrypt_server_t), ms, sizeof(ms_kx_encrypt_server_t))) {
+		return SGX_ERROR_UNEXPECTED;
+	}
+	sgx_status_t status = SGX_SUCCESS;
+	const uint32_t* _tmp_plaintext = __in_ms.ms_plaintext;
+	uint32_t _tmp_plain_count = __in_ms.ms_plain_count;
+	size_t _len_plaintext = _tmp_plain_count * sizeof(uint32_t);
+	uint32_t* _in_plaintext = NULL;
+	const uint8_t* _tmp_iv = __in_ms.ms_iv;
+	size_t _len_iv = 12;
+	uint8_t* _in_iv = NULL;
+	uint8_t* _tmp_ciphertext = __in_ms.ms_ciphertext;
+	uint32_t _tmp_cipher_size = __in_ms.ms_cipher_size;
+	size_t _len_ciphertext = _tmp_cipher_size;
+	uint8_t* _in_ciphertext = NULL;
+	uint8_t* _tmp_gcm_tag = __in_ms.ms_gcm_tag;
+	size_t _len_gcm_tag = 16;
+	uint8_t* _in_gcm_tag = NULL;
+	sgx_status_t _in_retval;
+
+	if (sizeof(*_tmp_plaintext) != 0 &&
+		(size_t)_tmp_plain_count > (SIZE_MAX / sizeof(*_tmp_plaintext))) {
+		return SGX_ERROR_INVALID_PARAMETER;
+	}
+
+	CHECK_UNIQUE_POINTER(_tmp_plaintext, _len_plaintext);
+	CHECK_UNIQUE_POINTER(_tmp_iv, _len_iv);
+	CHECK_UNIQUE_POINTER(_tmp_ciphertext, _len_ciphertext);
+	CHECK_UNIQUE_POINTER(_tmp_gcm_tag, _len_gcm_tag);
+
+	//
+	// fence after pointer checks
+	//
+	sgx_lfence();
+
+	if (_tmp_plaintext != NULL && _len_plaintext != 0) {
+		if ( _len_plaintext % sizeof(*_tmp_plaintext) != 0)
+		{
+			status = SGX_ERROR_INVALID_PARAMETER;
+			goto err;
+		}
+		_in_plaintext = (uint32_t*)malloc(_len_plaintext);
+		if (_in_plaintext == NULL) {
+			status = SGX_ERROR_OUT_OF_MEMORY;
+			goto err;
+		}
+
+		if (memcpy_s(_in_plaintext, _len_plaintext, _tmp_plaintext, _len_plaintext)) {
+			status = SGX_ERROR_UNEXPECTED;
+			goto err;
+		}
+
+	}
+	if (_tmp_iv != NULL && _len_iv != 0) {
+		if ( _len_iv % sizeof(*_tmp_iv) != 0)
+		{
+			status = SGX_ERROR_INVALID_PARAMETER;
+			goto err;
+		}
+		_in_iv = (uint8_t*)malloc(_len_iv);
+		if (_in_iv == NULL) {
+			status = SGX_ERROR_OUT_OF_MEMORY;
+			goto err;
+		}
+
+		if (memcpy_s(_in_iv, _len_iv, _tmp_iv, _len_iv)) {
+			status = SGX_ERROR_UNEXPECTED;
+			goto err;
+		}
+
+	}
+	if (_tmp_ciphertext != NULL && _len_ciphertext != 0) {
+		if ( _len_ciphertext % sizeof(*_tmp_ciphertext) != 0)
+		{
+			status = SGX_ERROR_INVALID_PARAMETER;
+			goto err;
+		}
+		if ((_in_ciphertext = (uint8_t*)malloc(_len_ciphertext)) == NULL) {
+			status = SGX_ERROR_OUT_OF_MEMORY;
+			goto err;
+		}
+
+		memset((void*)_in_ciphertext, 0, _len_ciphertext);
+	}
+	if (_tmp_gcm_tag != NULL && _len_gcm_tag != 0) {
+		if ( _len_gcm_tag % sizeof(*_tmp_gcm_tag) != 0)
+		{
+			status = SGX_ERROR_INVALID_PARAMETER;
+			goto err;
+		}
+		if ((_in_gcm_tag = (uint8_t*)malloc(_len_gcm_tag)) == NULL) {
+			status = SGX_ERROR_OUT_OF_MEMORY;
+			goto err;
+		}
+
+		memset((void*)_in_gcm_tag, 0, _len_gcm_tag);
+	}
+	_in_retval = kx_encrypt_server(__in_ms.ms_client_id, (const uint32_t*)_in_plaintext, _tmp_plain_count, (const uint8_t*)_in_iv, _in_ciphertext, _tmp_cipher_size, _in_gcm_tag);
+	if (memcpy_verw_s(&ms->ms_retval, sizeof(ms->ms_retval), &_in_retval, sizeof(_in_retval))) {
+		status = SGX_ERROR_UNEXPECTED;
+		goto err;
+	}
+	if (_in_ciphertext) {
+		if (memcpy_verw_s(_tmp_ciphertext, _len_ciphertext, _in_ciphertext, _len_ciphertext)) {
+			status = SGX_ERROR_UNEXPECTED;
+			goto err;
+		}
+	}
+	if (_in_gcm_tag) {
+		if (memcpy_verw_s(_tmp_gcm_tag, _len_gcm_tag, _in_gcm_tag, _len_gcm_tag)) {
+			status = SGX_ERROR_UNEXPECTED;
+			goto err;
+		}
+	}
+
+err:
+	if (_in_plaintext) free(_in_plaintext);
+	if (_in_iv) free(_in_iv);
+	if (_in_ciphertext) free(_in_ciphertext);
+	if (_in_gcm_tag) free(_in_gcm_tag);
+	return status;
+}
+
+static sgx_status_t SGX_CDECL sgx_kx_decrypt_server(void* pms)
+{
+	CHECK_REF_POINTER(pms, sizeof(ms_kx_decrypt_server_t));
+	//
+	// fence after pointer checks
+	//
+	sgx_lfence();
+	ms_kx_decrypt_server_t* ms = SGX_CAST(ms_kx_decrypt_server_t*, pms);
+	ms_kx_decrypt_server_t __in_ms;
+	if (memcpy_s(&__in_ms, sizeof(ms_kx_decrypt_server_t), ms, sizeof(ms_kx_decrypt_server_t))) {
+		return SGX_ERROR_UNEXPECTED;
+	}
+	sgx_status_t status = SGX_SUCCESS;
+	const uint8_t* _tmp_ciphertext = __in_ms.ms_ciphertext;
+	uint32_t _tmp_cipher_size = __in_ms.ms_cipher_size;
+	size_t _len_ciphertext = _tmp_cipher_size;
+	uint8_t* _in_ciphertext = NULL;
+	const uint8_t* _tmp_iv = __in_ms.ms_iv;
+	size_t _len_iv = 12;
+	uint8_t* _in_iv = NULL;
+	const uint8_t* _tmp_gcm_tag = __in_ms.ms_gcm_tag;
+	size_t _len_gcm_tag = 16;
+	uint8_t* _in_gcm_tag = NULL;
+	uint32_t* _tmp_plaintext = __in_ms.ms_plaintext;
+	uint32_t _tmp_plain_max = __in_ms.ms_plain_max;
+	size_t _len_plaintext = _tmp_plain_max * sizeof(uint32_t);
+	uint32_t* _in_plaintext = NULL;
+	uint32_t* _tmp_plain_count = __in_ms.ms_plain_count;
+	size_t _len_plain_count = sizeof(uint32_t);
+	uint32_t* _in_plain_count = NULL;
+	sgx_status_t _in_retval;
+
+	if (sizeof(*_tmp_plaintext) != 0 &&
+		(size_t)_tmp_plain_max > (SIZE_MAX / sizeof(*_tmp_plaintext))) {
+		return SGX_ERROR_INVALID_PARAMETER;
+	}
+
+	CHECK_UNIQUE_POINTER(_tmp_ciphertext, _len_ciphertext);
+	CHECK_UNIQUE_POINTER(_tmp_iv, _len_iv);
+	CHECK_UNIQUE_POINTER(_tmp_gcm_tag, _len_gcm_tag);
+	CHECK_UNIQUE_POINTER(_tmp_plaintext, _len_plaintext);
+	CHECK_UNIQUE_POINTER(_tmp_plain_count, _len_plain_count);
+
+	//
+	// fence after pointer checks
+	//
+	sgx_lfence();
+
+	if (_tmp_ciphertext != NULL && _len_ciphertext != 0) {
+		if ( _len_ciphertext % sizeof(*_tmp_ciphertext) != 0)
+		{
+			status = SGX_ERROR_INVALID_PARAMETER;
+			goto err;
+		}
+		_in_ciphertext = (uint8_t*)malloc(_len_ciphertext);
+		if (_in_ciphertext == NULL) {
+			status = SGX_ERROR_OUT_OF_MEMORY;
+			goto err;
+		}
+
+		if (memcpy_s(_in_ciphertext, _len_ciphertext, _tmp_ciphertext, _len_ciphertext)) {
+			status = SGX_ERROR_UNEXPECTED;
+			goto err;
+		}
+
+	}
+	if (_tmp_iv != NULL && _len_iv != 0) {
+		if ( _len_iv % sizeof(*_tmp_iv) != 0)
+		{
+			status = SGX_ERROR_INVALID_PARAMETER;
+			goto err;
+		}
+		_in_iv = (uint8_t*)malloc(_len_iv);
+		if (_in_iv == NULL) {
+			status = SGX_ERROR_OUT_OF_MEMORY;
+			goto err;
+		}
+
+		if (memcpy_s(_in_iv, _len_iv, _tmp_iv, _len_iv)) {
+			status = SGX_ERROR_UNEXPECTED;
+			goto err;
+		}
+
+	}
+	if (_tmp_gcm_tag != NULL && _len_gcm_tag != 0) {
+		if ( _len_gcm_tag % sizeof(*_tmp_gcm_tag) != 0)
+		{
+			status = SGX_ERROR_INVALID_PARAMETER;
+			goto err;
+		}
+		_in_gcm_tag = (uint8_t*)malloc(_len_gcm_tag);
+		if (_in_gcm_tag == NULL) {
+			status = SGX_ERROR_OUT_OF_MEMORY;
+			goto err;
+		}
+
+		if (memcpy_s(_in_gcm_tag, _len_gcm_tag, _tmp_gcm_tag, _len_gcm_tag)) {
+			status = SGX_ERROR_UNEXPECTED;
+			goto err;
+		}
+
+	}
+	if (_tmp_plaintext != NULL && _len_plaintext != 0) {
+		if ( _len_plaintext % sizeof(*_tmp_plaintext) != 0)
+		{
+			status = SGX_ERROR_INVALID_PARAMETER;
+			goto err;
+		}
+		if ((_in_plaintext = (uint32_t*)malloc(_len_plaintext)) == NULL) {
+			status = SGX_ERROR_OUT_OF_MEMORY;
+			goto err;
+		}
+
+		memset((void*)_in_plaintext, 0, _len_plaintext);
+	}
+	if (_tmp_plain_count != NULL && _len_plain_count != 0) {
+		if ( _len_plain_count % sizeof(*_tmp_plain_count) != 0)
+		{
+			status = SGX_ERROR_INVALID_PARAMETER;
+			goto err;
+		}
+		if ((_in_plain_count = (uint32_t*)malloc(_len_plain_count)) == NULL) {
+			status = SGX_ERROR_OUT_OF_MEMORY;
+			goto err;
+		}
+
+		memset((void*)_in_plain_count, 0, _len_plain_count);
+	}
+	_in_retval = kx_decrypt_server(__in_ms.ms_client_id, (const uint8_t*)_in_ciphertext, _tmp_cipher_size, (const uint8_t*)_in_iv, (const uint8_t*)_in_gcm_tag, _in_plaintext, _tmp_plain_max, _in_plain_count);
+	if (memcpy_verw_s(&ms->ms_retval, sizeof(ms->ms_retval), &_in_retval, sizeof(_in_retval))) {
+		status = SGX_ERROR_UNEXPECTED;
+		goto err;
+	}
+	if (_in_plaintext) {
+		if (memcpy_verw_s(_tmp_plaintext, _len_plaintext, _in_plaintext, _len_plaintext)) {
+			status = SGX_ERROR_UNEXPECTED;
+			goto err;
+		}
+	}
+	if (_in_plain_count) {
+		if (memcpy_verw_s(_tmp_plain_count, _len_plain_count, _in_plain_count, _len_plain_count)) {
+			status = SGX_ERROR_UNEXPECTED;
+			goto err;
+		}
+	}
+
+err:
+	if (_in_ciphertext) free(_in_ciphertext);
+	if (_in_iv) free(_in_iv);
+	if (_in_gcm_tag) free(_in_gcm_tag);
+	if (_in_plaintext) free(_in_plaintext);
+	if (_in_plain_count) free(_in_plain_count);
+	return status;
+}
+
 static sgx_status_t SGX_CDECL sgx_sgx_ra_get_ga(void* pms)
 {
 	CHECK_REF_POINTER(pms, sizeof(ms_sgx_ra_get_ga_t));
@@ -1136,9 +1567,9 @@ err:
 
 SGX_EXTERNC const struct {
 	size_t nr_ecall;
-	struct {void* ecall_addr; uint8_t is_priv; uint8_t is_switchless;} ecall_table[13];
+	struct {void* ecall_addr; uint8_t is_priv; uint8_t is_switchless;} ecall_table[17];
 } g_ecall_table = {
-	13,
+	17,
 	{
 		{(void*)(uintptr_t)sgx_enclave_init_ra, 0, 0},
 		{(void*)(uintptr_t)sgx_enclave_ra_close, 0, 0},
@@ -1150,6 +1581,10 @@ SGX_EXTERNC const struct {
 		{(void*)(uintptr_t)sgx_ecall_compute_psi_count, 0, 0},
 		{(void*)(uintptr_t)sgx_ecall_register_client_set, 0, 0},
 		{(void*)(uintptr_t)sgx_ecall_compute_psi_multi, 0, 0},
+		{(void*)(uintptr_t)sgx_kx_server_init, 0, 0},
+		{(void*)(uintptr_t)sgx_kx_server_finish, 0, 0},
+		{(void*)(uintptr_t)sgx_kx_encrypt_server, 0, 0},
+		{(void*)(uintptr_t)sgx_kx_decrypt_server, 0, 0},
 		{(void*)(uintptr_t)sgx_sgx_ra_get_ga, 0, 0},
 		{(void*)(uintptr_t)sgx_sgx_ra_proc_msg2_trusted, 0, 0},
 		{(void*)(uintptr_t)sgx_sgx_ra_get_msg3_trusted, 0, 0},
@@ -1158,11 +1593,11 @@ SGX_EXTERNC const struct {
 
 SGX_EXTERNC const struct {
 	size_t nr_ocall;
-	uint8_t entry_table[1][13];
+	uint8_t entry_table[1][17];
 } g_dyn_entry_table = {
 	1,
 	{
-		{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, },
+		{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, },
 	}
 };
 

@@ -19,5 +19,48 @@ enclave {
                                                     [in, size=32] uint8_t* received_mrenclave,
                                                     [in, size=32] uint8_t* expected_mrenclave,
                                                     [out] int* match);
+
+        /* Enclave-to-Enclave Key Exchange (client side) */
+        public sgx_status_t kx_client_init(
+            [out, size=64] uint8_t* client_pubkey);
+
+        public sgx_status_t kx_client_finish(
+            [in, size=64] const uint8_t* server_pubkey);
+
+        public sgx_status_t kx_encrypt_client(
+            [in, count=plain_count] const uint32_t* plaintext,
+            uint32_t plain_count,
+            [in, size=12] const uint8_t* iv,
+            [out, size=cipher_size] uint8_t* ciphertext,
+            uint32_t cipher_size,
+            [out, size=16] uint8_t* gcm_tag);
+
+        public sgx_status_t kx_decrypt_client(
+            [in, size=cipher_size] const uint8_t* ciphertext,
+            uint32_t cipher_size,
+            [in, size=12] const uint8_t* iv,
+            [in, size=16] const uint8_t* gcm_tag,
+            [out, count=plain_max] uint32_t* plaintext,
+            uint32_t plain_max,
+            [out] uint32_t* plain_count);
+
+        public sgx_status_t ecall_ra_encrypt_client(
+            sgx_ra_context_t context,
+            [in, count=plain_count] const uint32_t* plaintext,
+            uint32_t plain_count,
+            [in, size=12] const uint8_t* iv,
+            [out, size=cipher_size] uint8_t* ciphertext,
+            uint32_t cipher_size,
+            [out, size=16] uint8_t* gcm_tag);
+
+        public sgx_status_t ecall_ra_decrypt_client(
+            sgx_ra_context_t context,
+            [in, size=cipher_size] const uint8_t* ciphertext,
+            uint32_t cipher_size,
+            [in, size=12] const uint8_t* iv,
+            [in, size=16] const uint8_t* gcm_tag,
+            [out, count=plain_max] uint32_t* plaintext,
+            uint32_t plain_max,
+            [out] uint32_t* plain_count);
     };
 };
