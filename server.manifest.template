@@ -1,0 +1,52 @@
+# Gramine manifest for PSI_SGX RA-TLS Server
+
+loader.entrypoint = "file:{{ gramine.libos }}"
+libos.entrypoint = "{{ install_dir }}/server_ratls"
+
+loader.log_level = "{{ log_level }}"
+
+loader.env.LD_LIBRARY_PATH = "/lib:{{ arch_libdir }}:/usr{{ arch_libdir }}"
+loader.env.RA_TLS_ALLOW_OUTDATED_TCB_INSECURE = "1"  # For testing only
+loader.env.RA_TLS_ALLOW_DEBUG_ENCLAVE_INSECURE = "1"  # For testing only
+loader.env.RA_TLS_ALLOW_HW_CONFIG_NEEDED = "1"
+
+loader.insecure__use_cmdline_argv = true
+
+fs.mounts = [
+  { path = "/lib", uri = "file:{{ gramine.runtimedir() }}" },
+  { path = "{{ arch_libdir }}", uri = "file:{{ arch_libdir }}" },
+  { path = "/usr{{ arch_libdir }}", uri = "file:/usr{{ arch_libdir }}" },
+  { path = "/etc", uri = "file:/etc" },
+  { path = "{{ install_dir }}/server_ratls", uri = "file:{{ install_dir }}/server_ratls" },
+  { path = "{{ install_dir }}/enclave.signed.so", uri = "file:{{ install_dir }}/enclave.signed.so" },
+]
+
+sgx.debug = true
+sgx.edmm_enable = {{ 'true' if env.get('EDMM', '0') == '1' else 'false' }}
+
+sgx.trusted_files = [
+  "file:{{ gramine.libos }}",
+  "file:{{ install_dir }}/server_ratls",
+  "file:{{ install_dir }}/enclave.signed.so",
+  "file:{{ gramine.runtimedir() }}/",
+  "file:{{ arch_libdir }}/",
+  "file:/usr{{ arch_libdir }}/",
+]
+
+sgx.allowed_files = [
+  "file:/etc/nsswitch.conf",
+  "file:/etc/host.conf",
+  "file:/etc/resolv.conf",
+  "file:/etc/hosts",
+  "file:/etc/gai.conf",
+]
+
+sgx.remote_attestation = "dcap"  # Use DCAP for attestation
+
+# Enclave size and threads
+sgx.enclave_size = "1024M"
+sgx.max_threads = 16
+
+# Enable RA-TLS
+sgx.ra_client_spid = ""  # Not needed for DCAP
+sgx.ra_client_linkable = false

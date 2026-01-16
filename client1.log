@@ -1,0 +1,32 @@
+=== PSI_SGX Python Client ===
+Client ID: 1
+SIM Mode: ENABLED
+
+Client set: [1, 2, 3, 4, 5]
+Expected server set: [3, 4, 5, 6, 7, 8, 9]
+
+[CLIENT] Connecting to 127.0.0.1:12345...
+[CLIENT] TLS handshake completed!
+[CLIENT] Cipher: ('TLS_AES_256_GCM_SHA384', 'TLSv1.3', 256)
+[CLIENT] TLS version: TLSv1.3
+[CLIENT] Server certificate: 371 bytes
+[CLIENT] WARNING: Running in SIM mode - server quote not verified!
+[CLIENT] Receiving server ECDH public key...
+[CLIENT] Received server pubkey: 64 bytes
+[CLIENT] Generating client ECDH keypair...
+[CLIENT] Generated client pubkey: 64 bytes
+[CLIENT] Sent client pubkey to server
+[CLIENT] Big-endian failed, trying little-endian...
+[CLIENT] ECDH succeeded with little-endian
+[CLIENT] Shared secret derived: 32 bytes
+[CLIENT] AES key derived: 16 bytes (AES-128)
+[CLIENT] Generated IV: 12 bytes
+[CLIENT] Plaintext PSI set: [1, 2, 3, 4, 5] (20 bytes)
+[CLIENT] Encrypted data: plaintext 20 -> ciphertext 20
+[CLIENT] GCM tag: 16 bytes
+[CLIENT] Sending encrypted data: IV + size + blob + tag
+[CLIENT] Sent 52 bytes encrypted payload
+[CLIENT] Waiting for encrypted result...
+[CLIENT] ERROR: Expected IV (12 bytes), got 0
+
+[CLIENT] Failed to get PSI result

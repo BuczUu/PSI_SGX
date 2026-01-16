@@ -68,6 +68,7 @@ typedef struct
 static int client_count = 0;
 static int client_sockets[MAX_CLIENTS] = {0};
 static sgx_ra_context_t client_ra_contexts[MAX_CLIENTS] = {0};
+static int results_sent[MAX_CLIENTS] = {0};
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
 void print_error_message(sgx_status_t ret)
@@ -574,8 +575,8 @@ void *client_handler(void *arg)
                         continue;
                     }
 
-                    uint8_t iv2[12] = {0};
                     sgx_status_t enc_status = SGX_SUCCESS;
+                    uint8_t iv2[12] = {0};
                     sgx_status_t enc_ret = kx_encrypt_server(global_eid, &enc_status,
                                                              (uint32_t)(i + 1),
                                                              result, result_count,
@@ -597,6 +598,11 @@ void *client_handler(void *arg)
 
                     printf("[SERVER] Encrypted results sent to client %d\n", i + 1);
 
+                    // oznacz wyslanie wynikow do danego klienta
+                    pthread_mutex_lock(&lock);
+                    results_sent[i] = 1;
+                    pthread_mutex_unlock(&lock);
+
                     sgx_status_t ra_close_status;
                     enclave_ra_close(global_eid, &ra_close_status, client_ra_contexts[i]);
                 }
@@ -613,21 +619,15 @@ void *client_handler(void *arg)
         // pierwszy klient - utrzymaj polaczenie i RA, czekaj na drugiego
         printf("[SERVER] Client %d waiting for other client...\n", client->client_id);
 
-        // czekaj az PSI sie skonczy
+        // czekaj az wynik zostanie wyslany do tego klienta
         while (1)
         {
             pthread_mutex_lock(&lock);
-            int current_count = client_count;
+            int sent = results_sent[client->client_id - 1];
             pthread_mutex_unlock(&lock);
-
-            if (current_count >= 2)
-            {
-                // PSI policzone, poczekaj az wynik zostanie wyslany i RA zamkniety
-                sleep(3);
+            if (sent)
                 break;
-            }
-
-            sleep(1);
+            usleep(200 * 1000); // 200ms
         }
 
         close(client->socket);

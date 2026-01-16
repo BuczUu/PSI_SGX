@@ -1,0 +1,94 @@
+SGX_MODE ?= SIM
+URTS_LIB := sgx_urts
+ifeq ($(SGX_MODE),SIM)
+URTS_LIB := sgx_urts_sim
+endif
+# PSI_SGX with Gramine RA-TLS Makefile
+
+ifeq ($(DEBUG),1)
+CFLAGS += -O0 -ggdb3
+else
+CFLAGS += -O2
+endif
+
+CFLAGS += -Wall -Wextra
+CXXFLAGS += -Wall -Wextra -std=c++11 \
+	-Ira_tls
+
+.PHONY: all
+all: server_ratls
+	@echo ""
+	@echo "Build complete!"
+	@echo "To build enclave: SGX_MODE=SIM make enclave.signed.so (from main Makefile)"
+	@echo "Run server: LD_LIBRARY_PATH=/home/marcel/sgx_lab/sgxsdk/lib64:$$LD_LIBRARY_PATH ./server_ratls"
+
+########################### ENCLAVE ###########################
+
+ENCLAVE_DIR = Enclave
+ENCLAVE_FILES = $(ENCLAVE_DIR)/Enclave.cpp \
+                $(ENCLAVE_DIR)/Enclave_t.c
+
+enclave.so: $(ENCLAVE_FILES)
+	@echo "Building enclave..."
+	$(CXX) $(CXXFLAGS) -I$(ENCLAVE_DIR) -I$(SGX_SDK)/include -I$(SGX_SDK)/include/tlibc \
+		-nostdinc -fPIC -fno-stack-protector -fvisibility=hidden \
+		-o $@ $(ENCLAVE_FILES) \
+		-Wl,--no-undefined -nostdlib -nodefaultlibs -nostartfiles \
+		-L$(SGX_SDK)/lib64 \
+		-Wl,--whole-archive -lsgx_trts -Wl,--no-whole-archive \
+		-Wl,--start-group -lsgx_tstdc -lsgx_tcrypto -lsgx_tservice -Wl,--end-group \
+		-Wl,-Bstatic -Wl,-Bsymbolic -Wl,--no-undefined \
+		-Wl,-pie,-eenclave_entry -Wl,--export-dynamic \
+		-Wl,--defsym,__ImageBase=0 \
+		-Wl,--version-script=$(ENCLAVE_DIR)/Enclave.lds
+
+enclave.signed.so: enclave.so
+	@echo "Signing enclave..."
+	$(SGX_SDK)/bin/x64/sgx_sign sign -key $(ENCLAVE_DIR)/Enclave_private_test.pem \
+		-enclave enclave.so -out $@ \
+		-config $(ENCLAVE_DIR)/Enclave.config.xml
+
+########################### SERVER ###########################
+
+SERVER_RATLS_SRC = Server_RATLS.cpp Enclave/Enclave_u.c ra_tls/ra_tls_fake.c
+SERVER_RATLS_OBJ = $(SERVER_RATLS_SRC:.cpp=.o)
+
+server_ratls: $(SERVER_RATLS_SRC)
+	@echo "Building RA-TLS server (fake RA for SIM)..."
+	$(CXX) $(CXXFLAGS) -o $@ $^ \
+		-I$(SGX_SDK)/include -IEnclave -Isp \
+		-L$(SGX_SDK)/lib64 -L/usr/local/lib -L/usr/lib \
+		-l$(URTS_LIB) -lpthread \
+		-lmbedtls -lmbedcrypto -lmbedx509
+
+########################### CLIENTS ###########################
+
+.PHONY: clients
+clients: client_go
+
+client_go: client_go.go
+	@echo "Building Go client..."
+	go build -o $@ $<
+
+.PHONY: test-python
+test-python:
+	@echo "Testing Python client..."
+	chmod +x client_python.py
+	python3 client_python.py 1
+
+.PHONY: test-go
+test-go: client_go
+	@echo "Testing Go client..."
+	./client_go 1
+
+########################### CLEAN ###########################
+
+.PHONY: clean
+clean:
+	rm -f server_ratls *.manifest *.manifest.sgx *.sig *.token
+	rm -f client_go
+	rm -f *.o Enclave/*.o
+
+.PHONY: distclean
+distclean: clean
+	rm -f *.log

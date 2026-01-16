@@ -116,14 +116,15 @@ App_Cpp_Objects :=
 Server_Name := server
 Client_Name := client
 
-Server_Cpp_Files := Server.cpp sp/service_provider.cpp sp/ias_ra.cpp
+Server_Cpp_Files := Server_RATLS.cpp sp/service_provider.cpp sp/ias_ra.cpp ra_tls/ra_tls_fake.c
 Server_Cpp_Objects := $(Server_Cpp_Files:.cpp=.o)
+Server_Cpp_Objects := $(Server_Cpp_Objects:.c=.o)
 
 Client_Cpp_Files := Client.cpp
 Client_Cpp_Objects := $(Client_Cpp_Files:.cpp=.o)
 
 SP_CRYPTO_PATH := /home/marcel/sgx_lab/examples/RemoteAttestation/sample_libcrypto
-Server_Link_Flags := -L$(SGX_LIBRARY_PATH) -l$(Urts_Library_Name) -l$(Uae_Library_Name) -lsgx_ukey_exchange -L$(SP_CRYPTO_PATH) -lsample_libcrypto -lpthread
+Server_Link_Flags := -L$(SGX_LIBRARY_PATH) -l$(Urts_Library_Name) -l$(Uae_Library_Name) -lsgx_ukey_exchange -L$(SP_CRYPTO_PATH) -lsample_libcrypto -lpthread -lmbedtls -lmbedx509 -lmbedcrypto
 Client_Link_Flags := -L$(SGX_LIBRARY_PATH) -l$(Urts_Library_Name) -l$(Uae_Library_Name) -lsgx_ukey_exchange -L$(SP_CRYPTO_PATH) -lsample_libcrypto -lpthread
 
 ######## Enclave Settings ########
@@ -318,11 +319,18 @@ clean:
 ######## Server ########
 
 %.o: %.cpp Enclave_u.h
-	@$(CXX) $(SGX_COMMON_CXXFLAGS) -IInclude -Isp -I$(SGX_SDK)/include -I/home/marcel/sgx_lab/examples/RemoteAttestation/service_provider -I/home/marcel/sgx_lab/examples/RemoteAttestation/sample_libcrypto -I. -fPIC -c $< -o $@
+	@$(CXX) $(SGX_COMMON_CXXFLAGS) -IInclude -Isp -Ira_tls -I$(SGX_SDK)/include -I/home/marcel/sgx_lab/examples/RemoteAttestation/service_provider -I/home/marcel/sgx_lab/examples/RemoteAttestation/sample_libcrypto -I. -fPIC -c $< -o $@
 	@echo "CXX  <=  $<"
 
+%.o: %.c Enclave_u.h
+	@$(CC) $(SGX_COMMON_CFLAGS) -IInclude -Isp -Ira_tls -I$(SGX_SDK)/include -I/home/marcel/sgx_lab/examples/RemoteAttestation/service_provider -I/home/marcel/sgx_lab/examples/RemoteAttestation/sample_libcrypto -I. -fPIC -c $< -o $@
+	@echo "CC   <=  $<"
 
-$(Server_Name): $(Server_Cpp_Objects) Enclave_u.o
+ra_tls/ra_tls_fake.o: ra_tls/ra_tls_fake.c ra_tls/ra_tls.h
+	@$(CC) $(SGX_COMMON_CFLAGS) -Ira_tls -I$(SGX_SDK)/include -fPIC -c $< -o $@
+	@echo "CC   <=  $<"
+
+$(Server_Name): $(Server_Cpp_Objects) ra_tls/ra_tls_fake.o Enclave_u.o
 	@$(CXX) $^ -o $@ $(Server_Link_Flags)
 	@echo "LINK =>  $@"
 
@@ -370,6 +378,6 @@ Client.o: Client.cpp EnclaveClient_u.h
 	@$(CXX) $(SGX_COMMON_CXXFLAGS) -IInclude -I$(SGX_SDK)/include -I. -fPIC -c $< -o $@
 	@echo "CXX  <=  $<"
 
-$(Client_Name): Client.o EnclaveClient_u.o
+$(Client_Name): Client.o EnclaveClient_u.o sp/service_provider.o sp/ias_ra.o
 	@$(CXX) $^ -o $@ $(Client_Link_Flags)
 	@echo "LINK =>  $@"

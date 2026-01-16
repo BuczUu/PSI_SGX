@@ -253,9 +253,9 @@ sgx_status_t kx_server_init(uint32_t client_id, uint8_t *server_pubkey)
 }
 
 /* KX: zakonczenie po stronie serwera - policz sekret DH i wyprowadz AES-128 */
-sgx_status_t kx_server_finish(uint32_t client_id, const uint8_t *client_pubkey)
+sgx_status_t kx_server_finish(uint32_t client_id, const uint8_t *client_pubkey, sgx_status_t *enclave_ret)
 {
-    if (client_id < 1 || client_id > 2 || !client_pubkey)
+    if (client_id < 1 || client_id > 2 || !client_pubkey || !enclave_ret)
         return SGX_ERROR_INVALID_PARAMETER;
     uint32_t idx = client_id - 1;
     sgx_ec256_public_t peer{};
@@ -264,14 +264,39 @@ sgx_status_t kx_server_finish(uint32_t client_id, const uint8_t *client_pubkey)
     sgx_ec256_dh_shared_t shared{};
     sgx_status_t ret = sgx_ecc256_compute_shared_dhkey(&g_srv_priv[idx], &peer, &shared, g_ecc_ctx[idx]);
     if (ret != SGX_SUCCESS)
-        return ret;
+    {
+        *enclave_ret = ret;
+        return SGX_SUCCESS;
+    }
+
+    // Log shared secret for debugging
+    printf("[ENCLAVE] kx_server_finish: Shared secret first 16 bytes: ");
+    for (int i = 0; i < 16; i++)
+    {
+        printf("%02x", ((uint8_t *)&shared)[i]);
+    }
+    printf("\n");
+
     /* Derive AES-128 from shared (use SHA256, take first 16 bytes) */
     sgx_sha256_hash_t hash;
     ret = sgx_sha256_msg((const uint8_t *)&shared, sizeof(shared), &hash);
     if (ret != SGX_SUCCESS)
-        return ret;
+    {
+        *enclave_ret = ret;
+        return SGX_SUCCESS;
+    }
+
+    // Log derived key for debugging
+    printf("[ENCLAVE] kx_server_finish: Derived AES key (16 bytes): ");
+    for (int i = 0; i < 16; i++)
+    {
+        printf("%02x", hash[i]);
+    }
+    printf("\n");
+
     memcpy(&g_kx_keys[idx], hash, 16);
     g_kx_ready[idx] = 1;
+    *enclave_ret = SGX_SUCCESS;
     return SGX_SUCCESS;
 }
 
@@ -279,9 +304,19 @@ static sgx_status_t kx_get_key(uint32_t client_id, sgx_aes_gcm_128bit_key_t *key
 {
     if (client_id < 1 || client_id > 2 || !key)
         return SGX_ERROR_INVALID_PARAMETER;
+
     uint32_t idx = client_id - 1;
     if (!g_kx_ready[idx])
         return SGX_ERROR_INVALID_STATE;
+
+    // Log the key being used
+    printf("[ENCLAVE] kx_get_key: Using AES key: ");
+    for (int i = 0; i < 16; i++)
+    {
+        printf("%02x", ((uint8_t *)&g_kx_keys[idx])[i]);
+    }
+    printf("\n");
+
     memcpy(key, &g_kx_keys[idx], sizeof(*key));
     return SGX_SUCCESS;
 }
@@ -323,18 +358,35 @@ sgx_status_t kx_decrypt_server(uint32_t client_id,
                                uint32_t plain_max,
                                uint32_t *plain_count)
 {
+    printf("[ENCLAVE] kx_decrypt_server called: client_id=%u cipher_size=%u plain_max=%u\n",
+           client_id, cipher_size, plain_max);
+
     if (!ciphertext || !iv || !gcm_tag || !plaintext || !plain_count)
+    {
+        printf("[ENCLAVE] kx_decrypt_server: Invalid parameters (nullptrs)\n");
         return SGX_ERROR_INVALID_PARAMETER;
+    }
     if (cipher_size % sizeof(uint32_t))
+    {
+        printf("[ENCLAVE] kx_decrypt_server: cipher_size not multiple of uint32_t\n");
         return SGX_ERROR_INVALID_PARAMETER;
+    }
     uint32_t pt_bytes = cipher_size;
     uint32_t required = pt_bytes / sizeof(uint32_t);
     if (plain_max < required)
+    {
+        printf("[ENCLAVE] kx_decrypt_server: plain_max (%u) < required (%u)\n", plain_max, required);
         return SGX_ERROR_INVALID_PARAMETER;
+    }
     sgx_aes_gcm_128bit_key_t key;
     sgx_status_t ret = kx_get_key(client_id, &key);
     if (ret != SGX_SUCCESS)
+    {
+        printf("[ENCLAVE] kx_decrypt_server: kx_get_key failed: 0x%x\n", ret);
         return ret;
+    }
+
+    printf("[ENCLAVE] kx_decrypt_server: Calling sgx_rijndael128GCM_decrypt...\n");
     ret = sgx_rijndael128GCM_decrypt(&key,
                                      ciphertext,
                                      cipher_size,
@@ -344,8 +396,17 @@ sgx_status_t kx_decrypt_server(uint32_t client_id,
                                      NULL,
                                      0,
                                      (const sgx_aes_gcm_128bit_tag_t *)gcm_tag);
+
+    printf("[ENCLAVE] kx_decrypt_server: sgx_rijndael128GCM_decrypt returned: 0x%x\n", ret);
     if (ret == SGX_SUCCESS)
+    {
         *plain_count = required;
+        printf("[ENCLAVE] kx_decrypt_server: Decryption successful, count=%u\n", required);
+    }
+    else
+    {
+        printf("[ENCLAVE] kx_decrypt_server: Decryption FAILED with 0x%x\n", ret);
+    }
     return ret;
 }
 
@@ -360,24 +421,25 @@ sgx_status_t ecall_register_client_set(uint32_t client_id, const uint32_t *set, 
         memcpy(client1_set, set, set_size * sizeof(uint32_t));
         client1_size = set_size;
         printf("[ENCLAVE] Client 1 registered set of size %u\n", set_size);
+        clients_registered |= 0x1; // Mark client 1 as registered
     }
     else if (client_id == 2)
     {
         memcpy(client2_set, set, set_size * sizeof(uint32_t));
         client2_size = set_size;
         printf("[ENCLAVE] Client 2 registered set of size %u\n", set_size);
+        clients_registered |= 0x2; // Mark client 2 as registered
     }
     else
         return SGX_ERROR_INVALID_PARAMETER;
 
-    clients_registered++;
     return SGX_SUCCESS;
 }
 
 /* Oblicz czesc wspolna PSI */
 sgx_status_t ecall_compute_psi_multi(uint32_t *result, uint32_t *result_count)
 {
-    if (!result || !result_count || clients_registered != 2)
+    if (!result || !result_count || (clients_registered & 0x3) != 0x3)
         return SGX_ERROR_INVALID_PARAMETER;
 
     uint32_t count = 0;
@@ -425,5 +487,23 @@ sgx_status_t ecall_compute_psi_count(
 
     *result_count = count;
     printf("[ENCLAVE] PSI computed: intersection size = %u\n", count);
+    return SGX_SUCCESS;
+}
+
+/* Simple echo function for testing - returns input unchanged */
+sgx_status_t ecall_echo(uint32_t client_id,
+                        const uint8_t *input_data,
+                        uint32_t input_size,
+                        uint8_t *output_data,
+                        uint32_t *output_size)
+{
+    if (input_size > 1024)
+        return SGX_ERROR_INVALID_PARAMETER;
+
+    memcpy(output_data, input_data, input_size);
+    *output_size = input_size;
+
+    printf("[ENCLAVE] Echo: client %u sent %u bytes, returned %u bytes\n",
+           client_id, input_size, input_size);
     return SGX_SUCCESS;
 }

@@ -74,7 +74,8 @@ enclave {
 
         public sgx_status_t kx_server_finish(
             uint32_t client_id,
-            [in, size=64] const uint8_t* client_pubkey);
+            [in, size=64] const uint8_t* client_pubkey,
+            [out] sgx_status_t* enclave_ret);
 
         public sgx_status_t kx_encrypt_server(
             uint32_t client_id,
@@ -94,6 +95,14 @@ enclave {
             [out, count=plain_max] uint32_t* plaintext,
             uint32_t plain_max,
             [out] uint32_t* plain_count);
+        
+        /* Simple echo function for testing */
+        public sgx_status_t ecall_echo(
+            uint32_t client_id,
+            [in, size=input_size] const uint8_t* input_data,
+            uint32_t input_size,
+            [out, size=1024] uint8_t* output_data,
+            [out] uint32_t* output_size);
     };
     
     untrusted {

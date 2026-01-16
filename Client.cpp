@@ -7,6 +7,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <errno.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include "client_certs.h"
@@ -282,10 +283,10 @@ int main(int argc, char *argv[])
 
     printf("[CLIENT %d] Server attestation successful - server code verified!\n", client_id);
 
-    /* ===== MUTUAL ATTESTATION: Klient weryfikuje serwer (klient jako SP) ===== */
+    // klient weryfikuje serwer
     printf("[CLIENT %d] Starting mutual attestation - verifying server enclave...\n", client_id);
 
-    // Odbierz MSG1 od serwera
+    // odbierz MSG1 od serwera
     sgx_ra_msg1_t server_msg1;
     if (recv(socket_fd, &server_msg1, sizeof(server_msg1), 0) <= 0)
     {
@@ -297,23 +298,24 @@ int main(int argc, char *argv[])
     }
     printf("[CLIENT %d] Server MSG1 received\n", client_id);
 
-    // Przetworzenie MSG1 serwera przez SP (klient jako SP)
+    // przetworzenie MSG1 serwera przez SP
     sample_ra_msg1_t sp_server_msg1;
     memcpy(&sp_server_msg1, &server_msg1, sizeof(sp_server_msg1));
-    
+
     ra_samp_response_header_t *p_server_msg2_full = NULL;
     int sp_status = sp_ra_proc_msg1_req(&sp_server_msg1, sizeof(sp_server_msg1), &p_server_msg2_full);
     if (sp_status != SP_OK || !p_server_msg2_full || p_server_msg2_full->type != TYPE_RA_MSG2)
     {
         printf("[CLIENT %d] Failed to generate server MSG2 (sp_status=%d)\n", client_id, sp_status);
-        if (p_server_msg2_full) free(p_server_msg2_full);
+        if (p_server_msg2_full)
+            free(p_server_msg2_full);
         enclave_ra_close(global_eid, &ra_status, ra_context);
         close(socket_fd);
         sgx_destroy_enclave(global_eid);
         return -1;
     }
 
-    // Wyslij MSG2 do serwera
+    // wyslij MSG2 do serwera
     uint32_t server_msg2_size = p_server_msg2_full->size;
     if (send(socket_fd, &server_msg2_size, sizeof(server_msg2_size), 0) < 0 ||
         send(socket_fd, p_server_msg2_full->body, server_msg2_size, 0) < 0)
@@ -328,7 +330,7 @@ int main(int argc, char *argv[])
     free(p_server_msg2_full);
     printf("[CLIENT %d] Server MSG2 sent\n", client_id);
 
-    // Odbierz MSG3 od serwera
+    // odbierz MSG3 od serwera
     uint32_t server_msg3_size;
     if (recv(socket_fd, &server_msg3_size, sizeof(server_msg3_size), 0) <= 0)
     {
@@ -360,7 +362,7 @@ int main(int argc, char *argv[])
     }
     printf("[CLIENT %d] Server MSG3 received (size: %u)\n", client_id, server_msg3_size);
 
-    // Weryfikuj MSG3 serwera przez SP (klient jako SP)
+    // weryfikuj MSG3 serwera przez SP (klient jako SP)
     ra_samp_response_header_t *p_server_att_result = NULL;
     sp_status = sp_ra_proc_msg3_req((sample_ra_msg3_t *)p_server_msg3, server_msg3_size, &p_server_att_result);
     free(p_server_msg3);
@@ -370,7 +372,8 @@ int main(int argc, char *argv[])
         printf("[CLIENT %d] Server attestation verification FAILED (sp_status=%d)\n", client_id, sp_status);
         uint32_t server_att_failed = 0xFFFFFFFF;
         send(socket_fd, &server_att_failed, sizeof(server_att_failed), 0);
-        if (p_server_att_result) free(p_server_att_result);
+        if (p_server_att_result)
+            free(p_server_att_result);
         enclave_ra_close(global_eid, &ra_status, ra_context);
         close(socket_fd);
         sgx_destroy_enclave(global_eid);
@@ -379,7 +382,7 @@ int main(int argc, char *argv[])
     free(p_server_att_result);
     printf("[CLIENT %d] Server MSG3 verified - server enclave is AUTHENTIC!\n", client_id);
 
-    // Wyslij potwierdzenie weryfikacji serwera
+    // wyslij potwierdzenie weryfikacji serwera
     uint32_t server_att_ok = 0x00000000;
     if (send(socket_fd, &server_att_ok, sizeof(server_att_ok), 0) < 0)
     {
@@ -390,10 +393,48 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    printf("[CLIENT %d] ===== MUTUAL ATTESTATION COMPLETE - both enclaves verified! =====\n", client_id);
+    printf("[CLIENT %d] ATTESTATION COMPLETE\n", client_id);
 
-    // KX niepotrzebny - uzywamy RA SK (sgx_ra_get_keys)
-    printf("[CLIENT %d] Using RA session key for encryption (no KX needed)\n", client_id);
+    // Handshake ECDH (KX) wewnatrz enklaw po RA – klucz tylko w enklawach
+    uint8_t client_pub[64];
+    sgx_status_t kx_status = SGX_ERROR_UNEXPECTED;
+    ret = kx_client_init(global_eid, &kx_status, client_pub);
+    if (ret != SGX_SUCCESS || kx_status != SGX_SUCCESS)
+    {
+        printf("[CLIENT %d] kx_client_init failed: ret=0x%x status=0x%x\n", client_id, ret, kx_status);
+        enclave_ra_close(global_eid, &ra_status, ra_context);
+        close(socket_fd);
+        sgx_destroy_enclave(global_eid);
+        return -1;
+    }
+    // wyślij pub klienta i odbierz pub serwera
+    if (send(socket_fd, client_pub, sizeof(client_pub), 0) < 0)
+    {
+        perror("send client pub");
+        enclave_ra_close(global_eid, &ra_status, ra_context);
+        close(socket_fd);
+        sgx_destroy_enclave(global_eid);
+        return -1;
+    }
+    uint8_t server_pub[64];
+    if (recv(socket_fd, server_pub, sizeof(server_pub), 0) <= 0)
+    {
+        printf("[CLIENT %d] Failed to receive server pubkey\n", client_id);
+        enclave_ra_close(global_eid, &ra_status, ra_context);
+        close(socket_fd);
+        sgx_destroy_enclave(global_eid);
+        return -1;
+    }
+    ret = kx_client_finish(global_eid, &kx_status, server_pub);
+    if (ret != SGX_SUCCESS || kx_status != SGX_SUCCESS)
+    {
+        printf("[CLIENT %d] kx_client_finish failed: ret=0x%x status=0x%x\n", client_id, ret, kx_status);
+        enclave_ra_close(global_eid, &ra_status, ra_context);
+        close(socket_fd);
+        sgx_destroy_enclave(global_eid);
+        return -1;
+    }
+    printf("[CLIENT %d] KX established – payload key inside enclaves only\n", client_id);
 
     // przygotowanie zbioru danych
     uint32_t set[SET_SIZE];
@@ -429,14 +470,13 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    // Uzyj RA SK zamiast KX (po mutual attestation)
-    ret = ecall_ra_encrypt_client(global_eid, &ra_status,
-                                   ra_context,
-                                   set, set_size, iv,
-                                   ciphertext, cipher_size, gcm_tag);
-    if (ret != SGX_SUCCESS || ra_status != SGX_SUCCESS)
+    // szyfruj zbiory
+    ret = kx_encrypt_client(global_eid, &kx_status,
+                            set, set_size, iv,
+                            ciphertext, cipher_size, gcm_tag);
+    if (ret != SGX_SUCCESS || kx_status != SGX_SUCCESS)
     {
-        printf("[CLIENT %d] Failed to encrypt set with RA SK: ret=0x%x, ra_status=0x%x\n", client_id, ret, ra_status);
+        printf("[CLIENT %d] Failed to encrypt set with KX: ret=0x%x, status=0x%x\n", client_id, ret, kx_status);
         free(ciphertext);
         close(socket_fd);
         return -1;
@@ -459,12 +499,36 @@ int main(int argc, char *argv[])
     // czekaj na zaszyfrowany wynik PSI
     printf("[CLIENT %d] Waiting for encrypted PSI result...\n", client_id);
     uint32_t result_cipher_size;
-
-    if (recv(socket_fd, &result_cipher_size, sizeof(result_cipher_size), 0) <= 0)
+    // aktywne czekanie na dane od serwera
+    while (1)
     {
-        printf("[CLIENT %d] No result received or connection closed\n", client_id);
-        close(socket_fd);
-        return 0;
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(socket_fd, &rfds);
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 500 * 1000; // 500ms
+        int sel = select(socket_fd + 1, &rfds, NULL, NULL, &tv);
+        if (sel < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            perror("select");
+            close(socket_fd);
+            return -1;
+        }
+        if (sel > 0 && FD_ISSET(socket_fd, &rfds))
+        {
+            ssize_t r = recv(socket_fd, &result_cipher_size, sizeof(result_cipher_size), 0);
+            if (r <= 0)
+            {
+                printf("[CLIENT %d] Connection closed before result size\n", client_id);
+                close(socket_fd);
+                return -1;
+            }
+            break;
+        }
+        // brak danych – nadal czekaj
     }
 
     uint8_t *result_ciphertext = (uint8_t *)malloc(result_cipher_size);
@@ -476,22 +540,59 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    if (recv(socket_fd, result_ciphertext, result_cipher_size, 0) <= 0 ||
-        recv(socket_fd, result_tag, sizeof(result_tag), 0) <= 0)
+    // odbierz dokladnie result_cipher_size bajtow szyfrogramu
+    size_t got = 0;
+    while (got < result_cipher_size)
     {
-        printf("[CLIENT %d] Failed to receive encrypted result\n", client_id);
-        free(result_ciphertext);
-        close(socket_fd);
-        return -1;
+        ssize_t r = recv(socket_fd, result_ciphertext + got, result_cipher_size - got, 0);
+        if (r < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            perror("recv ciphertext");
+            free(result_ciphertext);
+            close(socket_fd);
+            return -1;
+        }
+        if (r == 0)
+        {
+            printf("[CLIENT %d] Connection closed while receiving result ciphertext\n", client_id);
+            free(result_ciphertext);
+            close(socket_fd);
+            return -1;
+        }
+        got += (size_t)r;
+    }
+    // odbierz 16 bajtow taga
+    got = 0;
+    while (got < sizeof(result_tag))
+    {
+        ssize_t r = recv(socket_fd, result_tag + got, sizeof(result_tag) - got, 0);
+        if (r < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            perror("recv tag");
+            free(result_ciphertext);
+            close(socket_fd);
+            return -1;
+        }
+        if (r == 0)
+        {
+            printf("[CLIENT %d] Connection closed while receiving result tag\n", client_id);
+            free(result_ciphertext);
+            close(socket_fd);
+            return -1;
+        }
+        got += (size_t)r;
     }
 
-    // odszyfruj wynik w enklawie (RA SK)
+    // odszyfruj wynik w enklawie (KX)
     uint32_t result[SET_SIZE];
     uint32_t result_count = 0;
-    ret = ecall_ra_decrypt_client(global_eid, &ra_status,
-                                   ra_context,
-                                   result_ciphertext, result_cipher_size, iv, result_tag,
-                                   result, SET_SIZE, &result_count);
+    ret = kx_decrypt_client(global_eid, &kx_status,
+                            result_ciphertext, result_cipher_size, iv, result_tag,
+                            result, SET_SIZE, &result_count);
     free(result_ciphertext);
 
     if (ret != SGX_SUCCESS || ra_status != SGX_SUCCESS)

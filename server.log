@@ -1,0 +1,7 @@
+=== PSI_SGX Server with RA-TLS ===
+[SERVER] Enclave created successfully
+[RA-TLS] Cert DER len=370, crt_old_size=4096, moving from offset 3726
+[RA-TLS] First 16 bytes of cert: 30 82 01 6e 30 82 01 14 a0 03 02 01 02 02 01 01
+[RA-TLS] Key DER len=121, key_old_size=4096, moving from offset 3975
+[SERVER] RA-TLS cert generated (370 bytes)
+[SERVER] Failed to bind

@@ -1,0 +1,16 @@
+=== PSI_SGX Server with RA-TLS ===
+[SERVER] Enclave created successfully
+[RA-TLS] Cert DER len=370, crt_old_size=4096, moving from offset 3726
+[RA-TLS] First 16 bytes of cert: 30 82 01 6e 30 82 01 14 a0 03 02 01 02 02 01 01
+[RA-TLS] Key DER len=121, key_old_size=4096, moving from offset 3975
+[SERVER] RA-TLS cert generated (370 bytes)
+[SERVER] Listening on port 12345
+[SERVER] Cert and key loaded
+[SERVER] Client 2: Connected
+[SERVER] Client 2: TLS handshake OK
+[SERVER] Client 2: Calling kx_server_init...
+[SERVER] Client 2: kx_server_init returned with status=0x0
+[SERVER] Client 2: Server pubkey generated
+[SERVER] Client 2: Sending pubkey (64 bytes)...
+[SERVER] Client 2: mbedtls_ssl_write returned: 64
+[SERVER] Client 2: Server pubkey sent
